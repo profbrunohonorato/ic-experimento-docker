@@ -1,211 +1,250 @@
-# Catálogo de Tecnologias — Segurança em CI/CD
+# Catálogo de Tecnologias — Contêineres e CI/CD
 
-Continuação da aula de qualidade, alinhada ao material `IC05 - SEGURANCA_CICD.pptx.pdf`. O catálogo React/Vite mantém as 30 tecnologias, a busca, o ESLint e os testes. A evolução integra segurança ao desenvolvimento e ao pipeline: **DevSecOps** e **shift left**, detectando problemas antes do build.
+Continuação da aula de segurança ([ic-experimento-seguranca](https://github.com/profbrunohonorato/ic-experimento-seguranca)), alinhada ao material da **Aula 6 — Contêineres e CI/CD** (`AULA.md`). O catálogo React/Vite e todo o pipeline de qualidade e segurança são mantidos. A evolução desta aula empacota a aplicação em uma **imagem Docker** e a **implanta automaticamente em uma máquina própria** por meio de um **self-hosted runner** do GitHub Actions (Opção B da atividade).
 
 ## O que mudou da aula anterior
 
-| Camada | Aplicação no projeto | Efeito |
+| Arquivo | Novo? | Papel |
 | --- | --- | --- |
-| Código | Interpolação JSX e teste contra interpretação de HTML | Proteção do ponto em que a busca volta à tela |
-| Qualidade | ESLint, Vitest e cobertura V8 | Mantém as verificações anteriores |
-| SAST | Semgrep com regras locais em `.semgrep.yml` | Bloqueia padrões inseguros em JS/JSX |
-| SCA | `npm audit --audit-level=high` | Bloqueia vulnerabilidades altas e críticas |
-| Segredos | Gitleaks com regras padrão e marcador didático | Busca credenciais no histórico |
-| Supply chain | Versões exatas, lockfile, `npm ci`, Actions por SHA e token restrito | Reduz mudanças inesperadas e privilégios |
-| Inventário | SBOM CycloneDX produzida pelo npm | Registra os componentes da instalação |
-| Security Gate | `needs` no job `build` | Só constrói após aprovação dos controles |
-| SonarQube | Etapa e propriedades comentadas | Preserva a referência sem exigir servidor ou secrets |
+| `Dockerfile` | Sim | Build multi-stage: Node.js compila, Nginx serve `dist/` |
+| `.dockerignore` | Sim | Mantém o contexto de build pequeno e sem segredos |
+| `compose.yaml` | Sim | Executa o contêiner na porta 8080, com healthcheck |
+| `.github/workflows/ci.yml` | Alterado | Jobs `docker-build` (GitHub) e `deploy` (self-hosted) |
+| `.gitignore` | Alterado | Ignora também `*.tar` gerado pelo `docker save` |
 
-A versão anterior permanece independente. Não é necessário copiar configurações dela para executar esta pasta.
+O restante (ESLint, Vitest, cobertura, Semgrep, `npm audit`, Gitleaks, SBOM e Security Gate) é idêntico ao projeto de segurança. Consulte o README daquele repositório para os detalhes desses controles.
 
-## Estrutura e responsabilidades
+## Estrutura
 
 ```text
-src/
-  App.jsx                       interface e estado da busca
-  SearchEmptyState.jsx          saída da busca como texto
-  SearchEmptyState.test.jsx     regressão de escape de HTML
-  search.js                     filtro sem executar a entrada
-  search.test.js                testes da busca
-  data.js                       dados estáticos do catálogo
-  main.jsx / styles.css         montagem e apresentação
-.semgrep.yml                    regras SAST versionadas
-.gitleaks.toml                  regras de secret scanning
-.gitignore                      exclusão de gerados e arquivos .env
-eslint.config.js                regras de qualidade e reconhecimento de JSX
-vite.config.js                  React e relatórios de cobertura
-package.json / package-lock.json dependências, scripts e árvore fixada
-sonar-project.properties        configuração comentada
-.github/workflows/ci.yml         workflow para repositório independente
-ATIVIDADE-PRATICA.md             proposta de trabalho para os alunos
+ic-docker/
+├── .github/
+│   └── workflows/
+│       └── ci.yml          ← alterado: docker-build + deploy
+├── src/                    aplicação React (sem alterações)
+├── .semgrep.yml            regras SAST
+├── .gitleaks.toml          regras de secret scanning
+├── package.json
+├── package-lock.json
+├── Dockerfile              ← novo
+├── .dockerignore           ← novo
+└── compose.yaml            ← novo
 ```
 
-## Execução local
+## Execução local sem Docker
 
-Recomendação: Node.js 22, npm 11.21.1. As dependências também suportam Node 20 a partir de 20.19. O pipeline usa Node 22 e fixa npm 11.21.1. O npm também é padronizado para manter consistentes a instalação, a auditoria e a geração da SBOM entre a máquina dos alunos e o CI.
+Node.js 22 e npm 11.21.1 (os mesmos do CI e do Dockerfile):
 
 ```bash
-cd aula-seguranca
 npm install --global npm@11.21.1
 npm ci
-npm run dev
-```
-
-Abra a URL exibida pelo Vite. `npm run build` cria `dist/` e `npm run preview` permite inspecionar esse build localmente.
-
-`npm ci` exige o lockfile e falha quando ele diverge de `package.json`. Ao atualizar uma biblioteca, use `npm install --save-exact pacote@versao`, revise o diff e versione os dois arquivos. Não apague o lockfile para fazer o CI passar.
-
-### Qualidade e cobertura
-
-```bash
+npm run dev        # servidor de desenvolvimento do Vite
 npm run lint
-npm test
 npm run coverage
 ```
 
-`src/search.js` normaliza espaços e caixa e usa `includes` para comparar texto. Os testes verificam nome, categoria, descrição, busca vazia, conteúdo semelhante a código e preservação dos dados.
+## Dockerfile — multi-stage build
 
-`eslint.config.js` mantém `no-unused-vars`, `no-console` e `eqeqeq`. As regras de React reconhecem componentes usados em JSX. Isso evita tratar imports de componentes como variáveis sem uso.
+```dockerfile
+# Etapa 1 — Build
+FROM node:22-alpine@sha256:1314fb30... AS build
+WORKDIR /app
+COPY package*.json ./
+RUN npm install -g npm@11.21.1 \
+    && npm ci
+COPY . .
+RUN npm run build
 
-A cobertura gera resumo no terminal, HTML e `coverage/lcov.info`. A configuração em `vite.config.js` inclui código de aplicação e exclui os dados estáticos e o ponto de montagem. Cobertura mede execução de código, não ausência de vulnerabilidades. Não há um percentual mínimo configurado; o bloqueio de qualidade ocorre por erro no lint ou nos testes. O job usa `npm run coverage`, que já executa os testes, sem duplicar a execução.
-
-## Segurança no código: entrada como texto
-
-A busca é entrada não confiável. Em `App.jsx`, ela filtra dados e, quando não há resultado, é passada ao componente `SearchEmptyState.jsx`:
-
-```jsx
-<div className="empty-state">
-  Nenhuma tecnologia encontrada para “{searchTerm}”.
-</div>
+# Etapa 2 — Execução
+FROM nginx:alpine@sha256:fb465858...
+COPY --from=build /app/dist /usr/share/nginx/html
+EXPOSE 80
 ```
 
-A interpolação JSX escapa o valor nesse contexto de texto. Uma entrada como `<img src=x onerror="alert(1)">` deve aparecer literalmente, sem criar uma imagem. O teste usa `renderToStaticMarkup` para verificar o HTML produzido pelo componente real: a abertura da tag vira `&lt;img` e não existe uma tag `<img` na saída.
+- **Etapa `build`:** instala as dependências exatamente como o lockfile define (`npm ci`) e gera `dist/`.
+- **Etapa final:** contém apenas Nginx e os arquivos estáticos. Node.js, `node_modules` e o código-fonte ficam fora da imagem final (≈ 63 MB), reduzindo tamanho e superfície de ataque.
+- **Cache de camadas:** `package*.json` é copiado antes do código. Alterar só `src/` reaproveita a camada do `npm ci`.
+- **Imagens fixadas por digest:** a tag (`22-alpine`, `alpine`) é apenas legível e pode mudar; o `@sha256:` garante que o build use sempre o mesmo conteúdo. Os digests foram validados em 23/11/2026. Para atualizar, faça `docker pull` da tag, consulte `docker image inspect --format '{{index .RepoDigests 0}}' <imagem>` e teste antes de trocar.
 
-Essa proteção se aplica a esse ponto de renderização; não torna qualquer URL ou uso futuro de HTML seguro. Por isso, evitamos `innerHTML`, `dangerouslySetInnerHTML` e execução de strings como código.
+### .dockerignore
 
-## SAST — Semgrep
+Exclui do contexto `node_modules`, `dist`, `coverage`, `reports`, `.git`, `.github`, `.env*`, `.venv`, arquivos `*.tar`/`*.zip`, a documentação e os próprios arquivos Docker. Isso evita copiar dependências do host (que podem ter binários de outro sistema), acelera o envio do contexto e impede que um `.env` local entre na imagem.
 
-SAST analisa o código sem executar a aplicação. ESLint e SAST são complementares: as regras de qualidade da aula anterior não cobrem os mesmos padrões de segurança.
-
-Instale o Semgrep em um ambiente Python 3.12 separado:
+### Construir e executar manualmente
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install semgrep==1.182.0
-npm run security:sast
+docker build -t catalogo:1.0 .
+docker run -d --name catalogo -p 127.0.0.1:8080:80 catalogo:1.0
+# http://localhost:8080
+docker rm -f catalogo
 ```
 
-No Windows, ative o ambiente conforme seu terminal, por exemplo `.venv\Scripts\Activate.ps1` no PowerShell.
-
-O script usa `semgrep scan --config .semgrep.yml --error --strict src`. As três regras locais procuram atribuição a `innerHTML`/`outerHTML` e chamadas a `insertAdjacentHTML`, uso de `dangerouslySetInnerHTML` e execução com `eval`/`new Function`.
-
-`--error` retorna falha quando há um achado; `--strict` também trata problemas de análise como falhas. No CI, o resultado fica em `reports/semgrep.json`, com métricas e verificação de versão desativadas. As regras estão no Git, sem necessidade de conta, token ou download de um ruleset remoto a cada execução.
-
-São regras conservadoras para demonstração: podem apontar usos com conteúdo constante e não fazem uma análise completa de fluxo de dados. Um resultado limpo significa apenas que essas regras não encontraram os padrões analisados. A versão da ferramenta e as regras devem ser revisadas ao evoluir o projeto.
-
-## SCA — dependências diretas e transitivas
-
-```bash
-npm run security:sca
-```
-
-O comando consulta a base de advisories do registro npm para a árvore instalada, incluindo ferramentas de desenvolvimento. Uma dependência transitiva também pode causar bloqueio. O relatório pode citar CVEs ou outros identificadores de advisories; a severidade orienta a política de bloqueio.
-
-A política é bloquear severidades **high** e **critical**. Riscos baixos e moderados continuam aparecendo no relatório, mas não provocam falha por essa política. O parâmetro `--audit-level=high` altera o código de saída, não oculta resultados inferiores.
-
-No CI, o JSON fica em `reports/npm-audit.json`. Indisponibilidade do registro também faz o comando falhar: não é tratada como aprovação. O resultado pode mudar sem alterações no código quando uma vulnerabilidade passa a ser conhecida.
-
-Não aplique `npm audit fix --force` automaticamente. Identifique a dependência, avalie uso e impacto, escolha a atualização e execute os testes. Lockfile e versão exata ajudam na reprodução; não garantem que o pacote seja seguro.
-
-## Secret scanning — Gitleaks
-
-Instale o [Gitleaks](https://github.com/gitleaks/gitleaks#installing), versão **8.30.1**, no `PATH`. Não é necessária a action comercial nem uma chave de licença: o workflow executa a CLI.
-
-```bash
-npm run security:secrets
-# Inclui arquivos locais ainda não commitados; use antes do commit:
-npm run security:secrets:dir
-```
-
-O primeiro comando examina o histórico do repositório Git; o segundo examina arquivos da pasta atual. A configuração `.gitleaks.toml` estende as regras padrão e acrescenta um marcador artificial para a demonstração. No CI, a configuração é passada explicitamente e `fetch-depth: 0` traz o histórico completo. Neste repositório com várias aulas, o histórico analisado é o do repositório inteiro.
-
-`--redact` mascara os valores encontrados. O relatório do pipeline fica em `reports/gitleaks.json`. No job de segredos não instalamos as dependências da aplicação; só precisamos do checkout e do scanner. O binário Linux é baixado de uma release fixa e comparado com um SHA-256 registrado no workflow antes de ser executado.
-
-Um `.env` ignorado pelo Git não é armazenamento seguro de credenciais. Nenhum segredo deve ir para o código do navegador: variáveis `VITE_*` podem ser incorporadas ao bundle. Um vazamento real exige revogar/rotacionar a credencial, remover a exposição e investigar seu uso. Apagar a linha em um commit posterior não a remove do histórico nem elimina o alerta.
-
-## Do workflow ao Security Gate
-
-Há duas versões equivalentes para os dois usos do material:
-
-- **Neste repositório:** `../.github/workflows/aula-seguranca.yml` está na raiz e executa comandos em `aula-seguranca`. Paths de cache e artefatos também levam esse prefixo, pois `defaults.run.working-directory` só afeta passos `run`.
-- **No repositório do aluno:** copie o conteúdo desta pasta, incluindo arquivos ocultos, para a raiz do novo repositório. `.github/workflows/ci.yml` já usa os caminhos relativos dessa estrutura. Não ative simultaneamente as duas versões.
-
-O GitHub não descobre workflows em `.github` de subpastas. Em ambas as versões, os eventos são push para `main`, pull request para `main` e execução manual.
-
-```text
-Checkout + instalação → Qualidade (lint + testes/cobertura) ─┐
-Checkout + Semgrep    → SAST                               │
-Checkout + npm ci     → SCA                                ├→ Gate → Build + SBOM
-Checkout completo    → Gitleaks (histórico)                 │
-                                                          ┘
-```
-
-Os quatro jobs executam independentemente, permitindo observar todos os resultados mesmo que um controle falhe. O gate é a dependência explícita do build:
+## Docker Compose
 
 ```yaml
-needs: [qualidade, sast, sca, segredos]
+name: catalogo
+services:
+  catalogo:
+    build: .
+    image: catalogo:1.0
+    container_name: catalogo
+    ports:
+      - "127.0.0.1:${CATALOGO_PORTA:-8080}:80"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
 ```
-
-Não há `continue-on-error`, `|| true` ou `if: always()` no build para contornar falhas. `if: always()` é usado somente no upload dos relatórios, permitindo consultar evidências de uma execução reprovada. Arquivos gerados ficam ignorados pelo Git; no Actions são artefatos retidos por sete dias.
-
-| Verificação | Quando bloqueia |
-| --- | --- |
-| Qualidade | Erro de lint, teste ou geração da cobertura |
-| SAST | Achado das regras configuradas ou erro do scanner |
-| SCA | Vulnerabilidade alta/crítica ou erro de execução |
-| Segredos | Credencial detectada ou erro do scanner |
-| Build | Só é iniciado se os quatro jobs passarem |
-
-O workflow bloqueia a geração do artefato, mas não configura a política de merge do GitHub. Para impedir merge, configure proteção/ruleset da branch exigindo os quatro checks. Não marque somente `build` como evidência de segurança: ele pode ficar ignorado quando uma dependência falha.
-
-### Supply chain aplicada ao próprio CI
-
-- `permissions: contents: read` aplica privilégio mínimo ao token do workflow.
-- `persist-credentials: false` evita manter a credencial do checkout na configuração Git.
-- Actions ativas são fixadas em SHA completo, com comentários indicando a versão de referência; tags podem mudar. Revise e atualize esses SHAs periodicamente.
-- Semgrep e Gitleaks têm versões fixadas; o download do Gitleaks também tem verificação de checksum. As dependências Python transitivas não têm um lockfile próprio nesta aula.
-- `npm ci` usa o lockfile e valida integridades registradas. Scripts de instalação de dependências ainda podem executar código: essa medida não isola pacotes maliciosos.
-- `timeout-minutes` limita jobs travados. O workflow não recebe credenciais de deploy e não publica a aplicação.
-
-## SBOM e proveniência
-
-Após o build, `npm sbom --sbom-format cyclonedx` gera `reports/sbom.cdx.json`. O artefato `catalogo-e-sbom` contém `dist/` e esse inventário. A SBOM inclui a árvore instalada, inclusive ferramentas de desenvolvimento; nem todos esses pacotes são incorporados ao JavaScript entregue ao navegador.
-
-Para gerar localmente:
 
 ```bash
-mkdir -p reports
-npm sbom --sbom-format cyclonedx > reports/sbom.cdx.json
+docker compose up -d --build --wait   # constrói, inicia e espera ficar healthy
+docker compose ps
+docker compose logs -f
+docker compose down
 ```
 
-O comando via npm também está disponível como `npm run sbom`; ao redirecionar para JSON, prefira o comando direto acima ou `npm run --silent sbom` para evitar cabeçalhos do npm.
+- `name: catalogo` fixa o nome do projeto Compose: o deploy do runner sempre substitui o mesmo contêiner, qualquer que seja a pasta do checkout.
+- A porta é publicada somente em `127.0.0.1`, não na rede local.
+- Se a porta 8080 já estiver em uso, troque-a sem editar o arquivo: `CATALOGO_PORTA=8081 docker compose up -d --build --wait`.
+- `restart: unless-stopped` reinicia o contêiner após reboot do Docker, exceto se ele foi parado manualmente.
 
-SBOM é um inventário. Proveniência registra como, onde e a partir de qual revisão o artefato foi construído. Os logs do Actions ajudam na rastreabilidade, mas esta versão não produz atestação criptográfica de proveniência nem assinatura do build. Essa é uma possível extensão da aula.
+## Pipeline CI/CD
 
-## SonarQube comentado
+```text
+qualidade ─┐
+sast      ─┤
+sca       ─┼→ build (React + SBOM) → docker-build → deploy
+segredos  ─┘   [Security Gate]        [GitHub]      [self-hosted]
+```
 
-A etapa aparece comentada no workflow e todas as propriedades de `sonar-project.properties` estão comentadas. Nenhum secret Sonar é necessário nesta aula. Para reativar posteriormente, descomente a configuração, ajuste a chave do projeto, configure `SONAR_HOST_URL` e `SONAR_TOKEN` em Actions secrets e fixe a action em um SHA verificado. No workflow da raiz, configure também o diretório-base da análise para `aula-seguranca`. O scan isolado não implementa espera pelo Quality Gate do SonarQube.
+| Job | Onde executa | Quando | O que faz |
+| --- | --- | --- | --- |
+| `qualidade`, `sast`, `sca`, `segredos` | `ubuntu-latest` | push, PR, manual | Controles da aula anterior |
+| `build` | `ubuntu-latest` | após os 4 controles | `npm run build` + SBOM |
+| `docker-build` | `ubuntu-latest` | após `build` | `docker build`, smoke test com `curl`, `docker save` → artefato `imagem-catalogo` |
+| `deploy` | `[self-hosted, linux, x64]` | só push/manual na `main` | `docker compose up -d --build --wait` e verificação HTTP |
 
-## Roteiro de demonstração e limites
+Detalhes do job `deploy`:
 
-Primeiro execute a versão sem alterações e abra os relatórios. Depois, use a [atividade prática](ATIVIDADE-PRATICA.md) para introduzir um padrão inseguro, mostrar o bloqueio e corrigir. A prática inclui uma simulação de segredo sem usar credenciais reais e uma análise de dependência em ambiente descartável.
+- **Não executa em pull requests.** Um PR poderia alterar o workflow ou o `Dockerfile` e executar comandos arbitrários na sua máquina; por isso, o runner só recebe código já integrado à `main`.
+- **`concurrency: deploy-catalogo`** impede dois deploys simultâneos; um push novo espera o anterior.
+- **`environment: local`** registra cada implantação na aba *Deployments* do repositório, com link para a aplicação.
+- **Porta configurável:** se a máquina do runner usar outra porta, crie a Variable de repositório `CATALOGO_PORTA` (*Settings → Secrets and variables → Actions → Variables*).
+- **`docker image prune -f`** remove imagens antigas sem tag, deixadas a cada novo build.
 
-Passar nos testes ou scanners não prova ausência de vulnerabilidades. Estes controles demonstram detecção antecipada e consequências no CI; não incluem DAST, autenticação, backend, deploy, monitoramento ou resposta automatizada a incidentes.
+## Configurar o self-hosted runner (Opção B)
 
-## Referências oficiais
+Pré-requisitos na máquina: Linux x64, Docker Engine com o plugin Compose v2, `curl` e `git`.
 
-- [Semgrep: estrutura e sintaxe de regras](https://semgrep.dev/docs/writing-rules/rule-syntax).
-- [npm audit: severidades e códigos de saída](https://docs.npmjs.com/cli/v11/commands/npm-audit/).
-- [Gitleaks: CLI, configuração e instalação](https://github.com/gitleaks/gitleaks).
-- [GitHub Actions: uso seguro e privilégio mínimo](https://docs.github.com/en/actions/reference/security/secure-use).
+### 1. Permitir que o usuário use o Docker
+
+O runner **não deve** rodar como root. Use um usuário comum que pertença ao grupo `docker`:
+
+```bash
+sudo usermod -aG docker "$USER"
+newgrp docker            # ou encerre a sessão e entre novamente
+docker run --rm hello-world
+```
+
+> Pertencer ao grupo `docker` equivale, na prática, a ter acesso de root no host. Use o runner apenas com repositórios privados ou com workflows e código em que você confia.
+
+### 2. Registrar o runner
+
+No GitHub: **Settings → Actions → Runners → New self-hosted runner**, escolha **Linux / x64** e siga os comandos exibidos. Eles têm o formato abaixo; copie a versão e o token **da página**, pois o token expira em uma hora:
+
+```bash
+mkdir ~/actions-runner && cd ~/actions-runner
+curl -o actions-runner-linux-x64-<versão>.tar.gz -L \
+  https://github.com/actions/runner/releases/download/v<versão>/actions-runner-linux-x64-<versão>.tar.gz
+echo "<sha256-exibido-na-página>  actions-runner-linux-x64-<versão>.tar.gz" | sha256sum -c
+tar xzf ./actions-runner-linux-x64-<versão>.tar.gz
+
+./config.sh --url https://github.com/<usuario>/<repositorio> --token <TOKEN>
+```
+
+Aceite os rótulos padrão (`self-hosted`, `Linux`, `X64`); são eles que o `runs-on: [self-hosted, linux, x64]` do workflow seleciona.
+
+### 3. Deixar o runner escutando (listener)
+
+Para testes, em primeiro plano:
+
+```bash
+./run.sh
+# √ Connected to GitHub
+# Listening for Jobs
+```
+
+Para manter o listener ativo após fechar o terminal ou reiniciar a máquina, instale-o como serviço systemd (executado com o seu usuário, não root):
+
+```bash
+sudo ./svc.sh install "$USER"
+sudo ./svc.sh start
+sudo ./svc.sh status
+```
+
+O runner aparece como **Idle** em *Settings → Actions → Runners*. Ele abre uma conexão de saída para o GitHub; não é preciso abrir portas no roteador nem expor a máquina.
+
+> Se o usuário foi adicionado ao grupo `docker` depois de instalar o serviço, reinicie-o (`sudo ./svc.sh stop && sudo ./svc.sh start`) para que o processo receba o novo grupo.
+
+### 4. Disparar e verificar o deploy
+
+```bash
+git push origin main      # ou Actions → CI/CD → Run workflow, na main
+```
+
+Ao terminar o job `self-hosted-deploy`:
+
+```bash
+docker compose -p catalogo ps
+curl -I http://localhost:8080
+```
+
+Abra `http://localhost:8080` no navegador.
+
+### Remover o runner
+
+```bash
+cd ~/actions-runner
+sudo ./svc.sh stop && sudo ./svc.sh uninstall
+./config.sh remove --token <TOKEN-de-remoção-exibido-no-GitHub>
+docker compose -p catalogo down
+```
+
+## Opção A — registry local (alternativa)
+
+O job `docker-build` publica `catalogo.tar` como artefato `imagem-catalogo`, mesmo sem self-hosted runner. Para usá-lo:
+
+```bash
+docker run -d --name registry -p 127.0.0.1:5000:5000 registry:2
+
+unzip imagem-catalogo.zip
+docker load -i catalogo.tar
+docker tag catalogo:1.0 localhost:5000/catalogo:1.0
+docker push localhost:5000/catalogo:1.0
+
+docker image rm catalogo:1.0 localhost:5000/catalogo:1.0   # prova que o pull busca do registry
+docker pull localhost:5000/catalogo:1.0
+```
+
+## Evidências para entrega
+
+| Critério | Evidência |
+| --- | --- |
+| Dockerfile | Build multi-stage Node.js → Nginx (`docker image ls catalogo:1.0`) |
+| .dockerignore | Arquivo versionado com as exclusões |
+| Docker Compose | Aplicação respondendo em `http://localhost:8080` |
+| GitHub Actions | Execução aprovada com `docker-build` após o Security Gate |
+| Opção B | Job `self-hosted-deploy` concluído no runner e aba *Deployments* |
+
+## Limites
+
+- A imagem é construída duas vezes: no `docker-build` (validação e artefato) e no runner (deploy). Em produção, o pipeline publicaria a imagem em um registry e o servidor faria `pull` por digest, garantindo que o artefato implantado seja exatamente o testado.
+- Nginx roda com a configuração padrão da imagem oficial. Cabeçalhos de segurança, usuário não-root (`nginx-unprivileged`) e varredura da imagem (ex.: Trivy) são extensões possíveis.
+- O Compose executa contêineres em um único host; não substitui um orquestrador como Kubernetes.
+
+## Referências
+
+- [Docker — Multi-stage builds](https://docs.docker.com/build/building/multi-stage/)
+- [Docker Compose](https://docs.docker.com/compose/)
+- [GitHub — Self-hosted runners](https://docs.github.com/en/actions/concepts/runners/self-hosted-runners)
+- [GitHub — Configurar o runner como serviço](https://docs.github.com/en/actions/hosting-your-own-runners/managing-self-hosted-runners/configuring-the-self-hosted-runner-application-as-a-service)
+- [GitHub Actions — uso seguro](https://docs.github.com/en/actions/reference/security/secure-use)

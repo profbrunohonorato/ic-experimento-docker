@@ -1,0 +1,21 @@
+# Nome fixo do projeto: o mesmo deploy é reaproveitado, independentemente
+# da pasta em que o runner fez o checkout.
+name: catalogo
+
+services:
+  catalogo:
+    build: .
+    image: catalogo:1.0
+    container_name: catalogo
+    ports:
+      # Publicado só na interface local. A porta do host pode ser trocada com
+      # CATALOGO_PORTA (ex.: quando 8080 já está em uso); o padrão é 8080.
+      - "127.0.0.1:${CATALOGO_PORTA:-8080}:80"
+    restart: unless-stopped
+    healthcheck:
+      # nginx:alpine traz o wget do BusyBox; não é preciso instalar curl.
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s

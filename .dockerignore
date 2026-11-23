@@ -1,0 +1,16 @@
+node_modules
+dist
+coverage
+reports
+.git
+.github
+.venv
+.env
+.env.*
+*.tar
+*.zip
+*.pptx
+*.md
+Dockerfile
+.dockerignore
+compose.yaml
